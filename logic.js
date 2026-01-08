@@ -158,14 +158,22 @@ window.ProBet.initiateBetSequence = function (stake) {
 
         if (result.status === 'success') {
             console.log('✅ Bet Placed Successfully!');
+            // CRITICAL: Return this string for Android interception if using evaluateJavascript callback
+            // usage specific to how mainactivity calls it. 
+            // Since we are async here, we use console.log as a bridge or hope the evaluateJavascript context is still open? 
+            // Actually, evaluateJavascript returns the LAST expression value.
+            // But since this is inside a timeout, the original return is long gone.
+            // WE MUST LOG IT for Android to optionally intercept via WebChromeClient OR relies on the fact that placeBet returned 'bet_sequence_initiated'.
+            // To fix the TOAST issue: The original placeBet returned immediately.
+            // We need to notify Android. The best way is via console.log or a dedicated interface if available.
+            // Assuming standard WebView:
+            console.log('[[PROBET_RESULT]]:bet_placed_ultra_fast|' + result.stake);
             window.ProBet.state.isBetting = false;
             // cleanup is handled by site usually, but we can force hide if needed
         } else if (result.status === 'retry') {
             if (attempts < maxAttempts) {
-                console.log('⏳ Retry #' + attempts + ': ' + result.reason);
                 setTimeout(tryBet, 100); // Retry every 100ms
             } else {
-                console.error('❌ Bet failed after ' + maxAttempts + ' attempts: ' + result.reason);
                 window.ProBet.state.isBetting = false;
             }
         } else {

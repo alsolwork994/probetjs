@@ -1,8 +1,16 @@
 window.ProBet = window.ProBet || {};
 
+// ==========================================
+// 1. CONFIGURATION & STATE
+// ==========================================
 window.ProBet.config = {
     isEnabled: false,
     stake: null
+};
+
+window.ProBet.state = {
+    isBetting: false,
+    lastBetTime: 0
 };
 
 window.ProBet.configure = function (isEnabled, stake) {
@@ -18,18 +26,23 @@ window.ProBet.configure = function (isEnabled, stake) {
     }
 };
 
+// ==========================================
+// 2. INVISIBLE MODE CSS
+// ==========================================
 (function injectStyles() {
     var styleId = 'probet-styles';
     if (document.getElementById(styleId)) return;
 
+    // We use opacity: 0 and move it off-center but keep it 'fixed' so it doesn't scroll away
     var css = `
-        /* Hide modal visually but keep it interactive in DOM */
         body.probet-autobet-active .place-bet-modal {
-            opacity: 0.05 !important;      /* Almost invisible but technically visible to bypass some browser checks */
-            z-index: -9999 !important;     /* Behind everything */
-            transform: scale(0.1);         /* Shrink it to minimize layout disruption */
+            opacity: 0 !important;
+            top: -5000px !important;
+            left: -5000px !important;
             position: fixed !important;
-            top: -1000px !important;       /* Move off screen */
+            display: block !important;
+            visibility: visible !important;
+            transition: none !important;
         }
         body.probet-autobet-active .modal-backdrop {
             display: none !important;
@@ -43,7 +56,9 @@ window.ProBet.configure = function (isEnabled, stake) {
     document.head.appendChild(style);
 })();
 
-// ... (Auto Login Logic kept same) ...
+// ==========================================
+// 3. AUTO LOGIN
+// ==========================================
 window.ProBet.performAutoLogin = function (username, password) {
     try {
         var usernameField = document.querySelector('input[name="username"]');
@@ -66,44 +81,50 @@ window.ProBet.performAutoLogin = function (username, password) {
     } catch (e) { return 'Error: ' + e.message; }
 };
 
+// ==========================================
+// 4. MUTATION OBSERVER (TRIGGER)
+// ==========================================
 window.ProBet.setupMutationObserver = function () {
     if (window.betObserverSetup) return 'already_setup';
+
     var observer = new MutationObserver(function (mutations) {
         if (!window.ProBet.config.isEnabled) return;
 
+        var modalFound = false;
+
         mutations.forEach(function (mutation) {
+            if (modalFound) return;
+
+            // Check added nodes
             mutation.addedNodes.forEach(function (node) {
                 if (node.nodeType === 1) {
-                    var modal = null;
-                    if (node.classList && node.classList.contains('place-bet-modal')) modal = node;
-                    else if (node.querySelector) modal = node.querySelector('.place-bet-modal');
-
-                    if (modal) {
-                        // Found modal! Wait slightly for React/Vue to hydrate inputs, then bet
-                        console.log('⚡ Modal detected! Queuing bet...');
-                        setTimeout(function () {
-                            window.ProBet.placeBet(window.ProBet.config.stake);
-                        }, 50);
+                    if ((node.classList && node.classList.contains('place-bet-modal')) ||
+                        (node.querySelector && node.querySelector('.place-bet-modal'))) {
+                        modalFound = true;
                     }
                 }
             });
 
             // Check visibility changes
-            if (mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
+            if (!modalFound && mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
                 var target = mutation.target;
                 if (target.classList && target.classList.contains('place-bet-modal')) {
                     if (target.style.display !== 'none') {
-                        setTimeout(function () {
-                            window.ProBet.placeBet(window.ProBet.config.stake);
-                        }, 50);
+                        modalFound = true;
                     }
                 }
             }
         });
+
+        if (modalFound) {
+            console.log('⚡ Modal detected! Initiating bet sequence...');
+            window.ProBet.initiateBetSequence(window.ProBet.config.stake);
+        }
     });
+
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
     window.betObserverSetup = true;
-    return 'observer_setup_v3';
+    return 'observer_setup_v4_robust';
 };
 
 window.ProBet.checkModalVisibility = function () {
@@ -116,122 +137,164 @@ window.ProBet.checkModalVisibility = function () {
     return 'notfound';
 };
 
-window.ProBet.placeBet = function (stake) {
-    // Basic debounce to prevent spamming
-    if (window.ProBet.isBetting && (Date.now() - window.ProBet.lastBetTime) < 500) return 'bet_cooldown';
-    window.ProBet.isBetting = true;
-    window.ProBet.lastBetTime = Date.now();
+// ==========================================
+// 5. ROBUST BETTING SEQUENCE
+// ==========================================
+window.ProBet.initiateBetSequence = function (stake) {
+    // Prevent overlapping sequences
+    if (window.ProBet.state.isBetting && (Date.now() - window.ProBet.state.lastBetTime) < 2000) {
+        return;
+    }
 
+    window.ProBet.state.isBetting = true;
+    window.ProBet.state.lastBetTime = Date.now();
+
+    var attempts = 0;
+    var maxAttempts = 20; // 2 seconds total (20 * 100ms)
+
+    function tryBet() {
+        attempts++;
+        var result = window.ProBet.attemptSingleBet(stake);
+
+        if (result.status === 'success') {
+            console.log('✅ Bet Placed Successfully!');
+            window.ProBet.state.isBetting = false;
+            // cleanup is handled by site usually, but we can force hide if needed
+        } else if (result.status === 'retry') {
+            if (attempts < maxAttempts) {
+                console.log('⏳ Retry #' + attempts + ': ' + result.reason);
+                setTimeout(tryBet, 100); // Retry every 100ms
+            } else {
+                console.error('❌ Bet failed after ' + maxAttempts + ' attempts: ' + result.reason);
+                window.ProBet.state.isBetting = false;
+            }
+        } else {
+            // Fatal error (no modal at all?)
+            if (attempts < maxAttempts) {
+                // Modal might not be in DOM yet, keep trying briefly
+                setTimeout(tryBet, 100);
+            } else {
+                window.ProBet.state.isBetting = false;
+            }
+        }
+    }
+
+    tryBet();
+};
+
+window.ProBet.attemptSingleBet = function (stake) {
     try {
         var modal = document.querySelector('.place-bet-modal.back') ||
             document.querySelector('.place-bet-modal.lay') ||
             document.querySelector('.place-bet-modal');
 
-        if (!modal) { window.ProBet.isBetting = false; return 'no_modal'; }
+        if (!modal) return { status: 'retry', reason: 'no_modal_in_dom' };
 
+        // --- INPUT HANDLING ---
         var input = modal.querySelector('input.stakeinput[type="number"]') ||
             modal.querySelector('input[type="number"]:not([disabled])');
 
-        if (!input) { window.ProBet.isBetting = false; return 'no_input'; }
+        if (!input) return { status: 'retry', reason: 'no_input_found' };
 
         var finalStake = stake;
 
         // --- MAX BET LOGIC ---
-        function parseMaxValue(text) {
-            if (!text) return null;
-            var match = text.match(/Min:\s*([\d.]+)\s+Max:\s*([\d.]+)\s*([KLkl])/i) ||
-                text.match(/Range:\s*(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s*([KLkl]?)/i) ||
-                text.match(/Max:\s*([\d.]+)\s*([KLkl])/i);
-            if (match) {
-                var val = parseFloat(match[2] || match[1]);
-                var suf = (match[3] || match[2] || '').toUpperCase();
-                if (text.includes('Range:')) { val = parseFloat(match[2]); suf = (match[3] || '').toUpperCase(); }
-                else if (text.includes('Min:')) { val = parseFloat(match[2]); suf = match[3].toUpperCase(); }
-                else if (match.length === 3 && text.includes('Max:')) { val = parseFloat(match[1]); suf = match[2].toUpperCase(); }
-                if (suf === 'K') val *= 1000;
-                else if (suf === 'L') val *= 100000;
-                return Math.floor(val);
-            }
-            return null;
-        }
-
         if (finalStake === '-1') {
-            var maxFound = null;
-            // 1. Elements
-            var minMaxElements = modal.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], span, div');
-            for (var i = 0; i < minMaxElements.length; i++) {
-                var t = minMaxElements[i].innerText || minMaxElements[i].textContent;
-                if (t && t.length < 200) { var m = parseMaxValue(t); if (m && m >= 10000) { maxFound = m; break; } }
-            }
-            // 2. Text
-            if (!maxFound) maxFound = parseMaxValue(modal.innerText || modal.textContent);
-            // 3. Page
-            if (!maxFound) {
-                var nameEl = modal.querySelector('.bet-team-name, b, .modal-title, .market-name, h5, h6, strong');
-                if (nameEl) {
-                    var mName = (nameEl.innerText || nameEl.textContent).trim();
-                    var markets = document.querySelectorAll('.fancy-market, .market-row, .bet-table-row, tr, [class*="market"]');
-                    for (var i = 0; i < markets.length; i++) {
-                        if ((markets[i].innerText || '').toLowerCase().includes(mName.toLowerCase().substring(0, 15))) {
-                            var selectors = '.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-nation-name, .max-bet';
-                            var mm = markets[i].querySelector(selectors);
-                            if (!mm) { var p = markets[i].closest('.bet-table, .market-container, .game-market, .market-4, .market-wrapper'); if (p) mm = p.querySelector(selectors); }
-                            if (mm) { maxFound = parseMaxValue(mm.innerText || mm.textContent); if (maxFound) break; }
-                            maxFound = parseMaxValue(markets[i].innerText || markets[i].textContent); if (maxFound) break;
-                        }
-                    }
-                }
-            }
-            if (!maxFound) {
-                var all = document.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-nation-name, .max-bet');
-                for (var i = all.length - 1; i >= 0; i--) { var m = parseMaxValue(all[i].innerText); if (m && m >= 1000) { maxFound = m; break; } }
-            }
-
+            var maxFound = window.ProBet.findMaxValue(modal);
             if (maxFound) finalStake = maxFound.toString();
-            else { window.ProBet.isBetting = false; console.warn('Max not found'); return 'no_max_found'; }
+            else return { status: 'retry', reason: 'waiting_for_max_bet_text' };
         }
 
-        // --- SET VALUE & EVENTS ---
+        // Set Value
         var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
         setter.call(input, finalStake);
 
-        // Dispatch heavy events to force Framework sync (React/Vue/Angular)
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Num0', bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Num0', bubbles: true }));
-        input.dispatchEvent(new Event('blur', { bubbles: true }));
+        // Dispatch Events
+        var events = ['input', 'change', 'blur', 'focus'];
+        events.forEach(function (evt) {
+            input.dispatchEvent(new Event(evt, { bubbles: true }));
+        });
 
-        // Wait a tiny bit for the "Place Bet" button to become enabled if it was disabled
-        setTimeout(function () {
-            var btn = modal.querySelector('.btn-success') ||
-                modal.querySelector('button.btn-success') ||
-                modal.querySelector('button[type="submit"]') ||
-                modal.querySelector('button:not([disabled])'); // Broadest fallback
+        // --- BUTTON HANDLING ---
+        var btn = modal.querySelector('.btn-success') ||
+            modal.querySelector('button.btn-success') ||
+            modal.querySelector('button[class*="bet"]') ||
+            modal.querySelector('button:not([disabled]):not(.close)');
 
-            if (btn) {
-                if (btn.disabled) {
-                    console.log('Button disabled, forcing enable...');
-                    btn.disabled = false;
-                }
-                btn.click();
-                console.log('✅ CLICKED. Stake:', finalStake);
+        if (!btn) return { status: 'retry', reason: 'no_button_found' };
 
-                // Force close logic if site doesn't do it
-                // setTimeout(function() { if (modal) modal.style.display = 'none'; }, 200);
+        if (btn.disabled) {
+            // Explicitly try to enable it (sometimes works)
+            btn.disabled = false;
+            // But usually we need to wait for validation
+            return { status: 'retry', reason: 'button_disabled' };
+        }
 
-                window.ProBet.isBetting = false;
-            } else {
-                console.error('Button not found!');
-                window.ProBet.isBetting = false;
-            }
-        }, 100); // 100ms delay for validation
+        // CLICK!
+        btn.click();
 
-        return 'bet_process_started|' + finalStake;
+        return { status: 'success', stake: finalStake };
 
     } catch (e) {
-        window.ProBet.isBetting = false;
-        return 'js_exception:' + e.message;
+        return { status: 'error', reason: e.message };
     }
 };
-               
+
+window.ProBet.findMaxValue = function (modal) {
+    function parse(text) {
+        if (!text) return null;
+        var match = text.match(/Min:\s*([\d.]+)\s+Max:\s*([\d.]+)\s*([KLkl])/i) ||
+            text.match(/Range:\s*(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s*([KLkl]?)/i) ||
+            text.match(/Max:\s*([\d.]+)\s*([KLkl])/i);
+        if (match) {
+            var val = parseFloat(match[2] || match[1]);
+            var suf = (match[3] || match[2] || '').toUpperCase();
+            if (text.includes('Range:')) { val = parseFloat(match[2]); suf = (match[3] || '').toUpperCase(); }
+            else if (text.includes('Min:')) { val = parseFloat(match[2]); suf = match[3].toUpperCase(); }
+            else if (match.length === 3 && text.includes('Max:')) { val = parseFloat(match[1]); suf = match[2].toUpperCase(); }
+            if (suf === 'K') val *= 1000;
+            else if (suf === 'L') val *= 100000;
+            return Math.floor(val);
+        }
+        return null;
+    }
+
+    var maxFound = null;
+    // 1. Elements
+    var minMaxElements = modal.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], span, div');
+    for (var i = 0; i < minMaxElements.length; i++) {
+        var t = minMaxElements[i].innerText || minMaxElements[i].textContent;
+        if (t && t.length < 200) { var m = parse(t); if (m && m >= 10000) { maxFound = m; break; } }
+    }
+    // 2. Text
+    if (!maxFound) maxFound = parse(modal.innerText || modal.textContent);
+    // 3. Page (Market Header)
+    if (!maxFound) {
+        var nameEl = modal.querySelector('.bet-team-name, b, .modal-title, .market-name, h5, h6, strong');
+        if (nameEl) {
+            var mName = (nameEl.innerText || nameEl.textContent).trim();
+            var markets = document.querySelectorAll('.fancy-market, .market-row, .bet-table-row, tr, [class*="market"]');
+            for (var i = 0; i < markets.length; i++) {
+                if ((markets[i].innerText || '').toLowerCase().includes(mName.toLowerCase().substring(0, 15))) {
+                    var selectors = '.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-nation-name, .max-bet';
+                    var mm = markets[i].querySelector(selectors);
+                    if (!mm) { var p = markets[i].closest('.bet-table, .market-container, .game-market, .market-4, .market-wrapper'); if (p) mm = p.querySelector(selectors); }
+                    if (mm) { maxFound = parse(mm.innerText || mm.textContent); if (maxFound) break; }
+                    maxFound = parse(markets[i].innerText || markets[i].textContent); if (maxFound) break;
+                }
+            }
+        }
+    }
+    // 4. Any
+    if (!maxFound) {
+        var all = document.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-nation-name, .max-bet');
+        for (var i = all.length - 1; i >= 0; i--) { var m = parse(all[i].innerText); if (m && m >= 1000) { maxFound = m; break; } }
+    }
+    return maxFound;
+};
+
+// Fallback for direct calls from Android
+window.ProBet.placeBet = function (stake) {
+    window.ProBet.initiateBetSequence(stake);
+    return 'bet_sequence_initiated';
+};

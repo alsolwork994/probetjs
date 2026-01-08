@@ -10,7 +10,8 @@ window.ProBet.config = {
 
 window.ProBet.state = {
     isBetting: false,
-    lastBetTime: 0
+    lastBetTime: 0,
+    betLock: false // HARD LOCK to prevent duplicate executions
 };
 
 window.ProBet.configure = function (isEnabled, stake) {
@@ -19,10 +20,8 @@ window.ProBet.configure = function (isEnabled, stake) {
 
     if (isEnabled) {
         document.body.classList.add('probet-autobet-active');
-        console.log('⚡ Autobet ACTIVATED. Stake:', stake);
     } else {
         document.body.classList.remove('probet-autobet-active');
-        console.log('⏸️ Autobet DEACTIVATED.');
     }
 };
 
@@ -33,7 +32,6 @@ window.ProBet.configure = function (isEnabled, stake) {
     var styleId = 'probet-styles';
     if (document.getElementById(styleId)) return;
 
-    // We use opacity: 0 and move it off-center but keep it 'fixed' so it doesn't scroll away
     var css = `
         body.probet-autobet-active .place-bet-modal {
             opacity: 0 !important;
@@ -90,12 +88,14 @@ window.ProBet.setupMutationObserver = function () {
     var observer = new MutationObserver(function (mutations) {
         if (!window.ProBet.config.isEnabled) return;
 
+        // Anti-spam check: If locked, ignore DOM changes completely
+        if (window.ProBet.state.betLock) return;
+
         var modalFound = false;
 
         mutations.forEach(function (mutation) {
             if (modalFound) return;
 
-            // Check added nodes
             mutation.addedNodes.forEach(function (node) {
                 if (node.nodeType === 1) {
                     if ((node.classList && node.classList.contains('place-bet-modal')) ||
@@ -105,7 +105,6 @@ window.ProBet.setupMutationObserver = function () {
                 }
             });
 
-            // Check visibility changes
             if (!modalFound && mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
                 var target = mutation.target;
                 if (target.classList && target.classList.contains('place-bet-modal')) {
@@ -117,14 +116,13 @@ window.ProBet.setupMutationObserver = function () {
         });
 
         if (modalFound) {
-            console.log('⚡ Modal detected! Initiating bet sequence...');
             window.ProBet.initiateBetSequence(window.ProBet.config.stake);
         }
     });
 
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
     window.betObserverSetup = true;
-    return 'observer_setup_v4_robust';
+    return 'observer_setup_v5_debounced';
 };
 
 window.ProBet.checkModalVisibility = function () {
@@ -141,48 +139,54 @@ window.ProBet.checkModalVisibility = function () {
 // 5. ROBUST BETTING SEQUENCE
 // ==========================================
 window.ProBet.initiateBetSequence = function (stake) {
-    // Prevent overlapping sequences
-    if (window.ProBet.state.isBetting && (Date.now() - window.ProBet.state.lastBetTime) < 2000) {
+    // 1. GLOBAL LOCK CHECK
+    // If a bet sequence is already running or ran very recently (within 3 seconds), ABORT.
+    if (window.ProBet.state.betLock) {
+        console.log('🔒 Bet Sequence Locked - Skipping duplicate trigger');
+        return;
+    }
+    if ((Date.now() - window.ProBet.state.lastBetTime) < 3000) {
+        console.log('⏳ Cooldown active - Skipping duplicate trigger');
         return;
     }
 
+    // 2. SET LOCK
+    window.ProBet.state.betLock = true;
     window.ProBet.state.isBetting = true;
     window.ProBet.state.lastBetTime = Date.now();
 
     var attempts = 0;
-    var maxAttempts = 20; // 2 seconds total (20 * 100ms)
+    var maxAttempts = 20; // 2 seconds total loop
+
+    function cleanupAndUnlock() {
+        console.log('🔓 Unlocking bet sequence...');
+        window.ProBet.state.isBetting = false;
+        // Keep the lock for 1 more second to prevent 'bounce' re-triggering from the same modal closing/opening
+        setTimeout(function () {
+            window.ProBet.state.betLock = false;
+        }, 1000);
+    }
 
     function tryBet() {
         attempts++;
         var result = window.ProBet.attemptSingleBet(stake);
 
         if (result.status === 'success') {
-            console.log('✅ Bet Placed Successfully!');
-            // CRITICAL: Return this string for Android interception if using evaluateJavascript callback
-            // usage specific to how mainactivity calls it. 
-            // Since we are async here, we use console.log as a bridge or hope the evaluateJavascript context is still open? 
-            // Actually, evaluateJavascript returns the LAST expression value.
-            // But since this is inside a timeout, the original return is long gone.
-            // WE MUST LOG IT for Android to optionally intercept via WebChromeClient OR relies on the fact that placeBet returned 'bet_sequence_initiated'.
-            // To fix the TOAST issue: The original placeBet returned immediately.
-            // We need to notify Android. The best way is via console.log or a dedicated interface if available.
-            // Assuming standard WebView:
             console.log('[[PROBET_RESULT]]:bet_placed_ultra_fast|' + result.stake);
-            window.ProBet.state.isBetting = false;
-            // cleanup is handled by site usually, but we can force hide if needed
+            cleanupAndUnlock();
         } else if (result.status === 'retry') {
             if (attempts < maxAttempts) {
-                setTimeout(tryBet, 100); // Retry every 100ms
-            } else {
-                window.ProBet.state.isBetting = false;
-            }
-        } else {
-            // Fatal error (no modal at all?)
-            if (attempts < maxAttempts) {
-                // Modal might not be in DOM yet, keep trying briefly
                 setTimeout(tryBet, 100);
             } else {
-                window.ProBet.state.isBetting = false;
+                console.warn('❌ Bet sequence timed out (retry)');
+                cleanupAndUnlock();
+            }
+        } else {
+            if (attempts < maxAttempts) {
+                setTimeout(tryBet, 100);
+            } else {
+                console.warn('❌ Bet sequence timed out (no modal)');
+                cleanupAndUnlock();
             }
         }
     }
@@ -213,6 +217,9 @@ window.ProBet.attemptSingleBet = function (stake) {
             else return { status: 'retry', reason: 'waiting_for_max_bet_text' };
         }
 
+        // Check if value already set (to avoid duplicate inputs/clicks if function called twice)
+        // Note: some sites clear input on open, so we re-set it, but we rely on global lock for safety.
+
         // Set Value
         var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
         setter.call(input, finalStake);
@@ -232,9 +239,7 @@ window.ProBet.attemptSingleBet = function (stake) {
         if (!btn) return { status: 'retry', reason: 'no_button_found' };
 
         if (btn.disabled) {
-            // Explicitly try to enable it (sometimes works)
             btn.disabled = false;
-            // But usually we need to wait for validation
             return { status: 'retry', reason: 'button_disabled' };
         }
 

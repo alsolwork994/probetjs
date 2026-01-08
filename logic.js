@@ -11,7 +11,8 @@ window.ProBet.config = {
 window.ProBet.state = {
     isBetting: false,
     lastBetTime: 0,
-    betLock: false // HARD LOCK to prevent duplicate executions
+    betLock: false,
+    lastResultTime: 0 // New: Track specifically when we last emitted a success result
 };
 
 window.ProBet.configure = function (isEnabled, stake) {
@@ -87,9 +88,7 @@ window.ProBet.setupMutationObserver = function () {
 
     var observer = new MutationObserver(function (mutations) {
         if (!window.ProBet.config.isEnabled) return;
-
-        // Anti-spam check: If locked, ignore DOM changes completely
-        if (window.ProBet.state.betLock) return;
+        if (window.ProBet.state.betLock) return; // Locked!
 
         var modalFound = false;
 
@@ -122,7 +121,7 @@ window.ProBet.setupMutationObserver = function () {
 
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
     window.betObserverSetup = true;
-    return 'observer_setup_v5_debounced';
+    return 'observer_setup_v6_strict_result';
 };
 
 window.ProBet.checkModalVisibility = function () {
@@ -139,32 +138,32 @@ window.ProBet.checkModalVisibility = function () {
 // 5. ROBUST BETTING SEQUENCE
 // ==========================================
 window.ProBet.initiateBetSequence = function (stake) {
-    // 1. GLOBAL LOCK CHECK
-    // If a bet sequence is already running or ran very recently (within 3 seconds), ABORT.
-    if (window.ProBet.state.betLock) {
-        console.log('🔒 Bet Sequence Locked - Skipping duplicate trigger');
-        return;
-    }
-    if ((Date.now() - window.ProBet.state.lastBetTime) < 3000) {
-        console.log('⏳ Cooldown active - Skipping duplicate trigger');
-        return;
-    }
+    if (window.ProBet.state.betLock) return;
+    if ((Date.now() - window.ProBet.state.lastBetTime) < 3000) return;
 
-    // 2. SET LOCK
     window.ProBet.state.betLock = true;
     window.ProBet.state.isBetting = true;
     window.ProBet.state.lastBetTime = Date.now();
 
     var attempts = 0;
-    var maxAttempts = 20; // 2 seconds total loop
+    var maxAttempts = 20;
 
     function cleanupAndUnlock() {
-        console.log('🔓 Unlocking bet sequence...');
         window.ProBet.state.isBetting = false;
-        // Keep the lock for 1 more second to prevent 'bounce' re-triggering from the same modal closing/opening
-        setTimeout(function () {
-            window.ProBet.state.betLock = false;
-        }, 1000);
+        setTimeout(function () { window.ProBet.state.betLock = false; }, 1000);
+    }
+
+    // NEW: STRICT RESULT EMISSION
+    // Ensures we NEVER emit a result more than once every 2 seconds
+    function emitSuccess(stake) {
+        var now = Date.now();
+        if (now - window.ProBet.state.lastResultTime > 2000) {
+            console.log('[[PROBET_RESULT]]:bet_placed_ultra_fast|' + stake);
+            window.ProBet.state.lastResultTime = now;
+        } else {
+            console.log('⚠️ Result suppressed (duplicate check)');
+        }
+        cleanupAndUnlock();
     }
 
     function tryBet() {
@@ -172,20 +171,17 @@ window.ProBet.initiateBetSequence = function (stake) {
         var result = window.ProBet.attemptSingleBet(stake);
 
         if (result.status === 'success') {
-            console.log('[[PROBET_RESULT]]:bet_placed_ultra_fast|' + result.stake);
-            cleanupAndUnlock();
+            emitSuccess(result.stake);
         } else if (result.status === 'retry') {
             if (attempts < maxAttempts) {
                 setTimeout(tryBet, 100);
             } else {
-                console.warn('❌ Bet sequence timed out (retry)');
                 cleanupAndUnlock();
             }
         } else {
             if (attempts < maxAttempts) {
                 setTimeout(tryBet, 100);
             } else {
-                console.warn('❌ Bet sequence timed out (no modal)');
                 cleanupAndUnlock();
             }
         }
@@ -217,14 +213,9 @@ window.ProBet.attemptSingleBet = function (stake) {
             else return { status: 'retry', reason: 'waiting_for_max_bet_text' };
         }
 
-        // Check if value already set (to avoid duplicate inputs/clicks if function called twice)
-        // Note: some sites clear input on open, so we re-set it, but we rely on global lock for safety.
-
-        // Set Value
         var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
         setter.call(input, finalStake);
 
-        // Dispatch Events
         var events = ['input', 'change', 'blur', 'focus'];
         events.forEach(function (evt) {
             input.dispatchEvent(new Event(evt, { bubbles: true }));
@@ -243,7 +234,6 @@ window.ProBet.attemptSingleBet = function (stake) {
             return { status: 'retry', reason: 'button_disabled' };
         }
 
-        // CLICK!
         btn.click();
 
         return { status: 'success', stake: finalStake };
@@ -273,15 +263,12 @@ window.ProBet.findMaxValue = function (modal) {
     }
 
     var maxFound = null;
-    // 1. Elements
     var minMaxElements = modal.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], span, div');
     for (var i = 0; i < minMaxElements.length; i++) {
         var t = minMaxElements[i].innerText || minMaxElements[i].textContent;
         if (t && t.length < 200) { var m = parse(t); if (m && m >= 10000) { maxFound = m; break; } }
     }
-    // 2. Text
     if (!maxFound) maxFound = parse(modal.innerText || modal.textContent);
-    // 3. Page (Market Header)
     if (!maxFound) {
         var nameEl = modal.querySelector('.bet-team-name, b, .modal-title, .market-name, h5, h6, strong');
         if (nameEl) {
@@ -298,7 +285,6 @@ window.ProBet.findMaxValue = function (modal) {
             }
         }
     }
-    // 4. Any
     if (!maxFound) {
         var all = document.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-nation-name, .max-bet');
         for (var i = all.length - 1; i >= 0; i--) { var m = parse(all[i].innerText); if (m && m >= 1000) { maxFound = m; break; } }
@@ -306,7 +292,6 @@ window.ProBet.findMaxValue = function (modal) {
     return maxFound;
 };
 
-// Fallback for direct calls from Android
 window.ProBet.placeBet = function (stake) {
     window.ProBet.initiateBetSequence(stake);
     return 'bet_sequence_initiated';

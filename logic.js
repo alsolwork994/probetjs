@@ -297,61 +297,103 @@ window.ProBet.findMaxValue = function (modal) {
 
     console.log('🔍 Starting max bet search...');
     var maxFound = null;
+    var allMaxValues = []; // Collect all found max values for debugging
 
-    // Step 1: Check modal content directly first (most reliable)
-    var modalText = modal.innerText || modal.textContent;
-    maxFound = parse(modalText);
-    if (maxFound) {
-        console.log('✅ Max found in modal text:', maxFound);
-        return maxFound;
-    }
-
-    // Step 2: Look for specific min-max elements
-    var minMaxElements = modal.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-info, .bet-info');
-    console.log('📋 Checking', minMaxElements.length, 'min-max elements...');
+    // Step 1: Look for min-max info WITHIN the modal first (most specific)
+    // Check for elements that are likely to contain the bet limits for THIS specific bet
+    var minMaxElements = modal.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-info, .bet-info, .bet-limits, .limits');
+    console.log('📋 Checking', minMaxElements.length, 'min-max elements in modal...');
     for (var i = 0; i < minMaxElements.length; i++) {
         var t = minMaxElements[i].innerText || minMaxElements[i].textContent;
         if (t && t.length < 200) {
             var m = parse(t);
             if (m) {
-                maxFound = m;
-                console.log('✅ Max found in element', i, ':', maxFound);
-                break;
+                allMaxValues.push({ value: m, source: 'modal-element-' + i, text: t.substring(0, 50) });
+                console.log('✓ Found max in modal element', i, ':', m, 'from:', t.substring(0, 50));
+                // Don't break - collect all values
             }
         }
     }
-    if (maxFound) return maxFound;
 
-    // Step 3: Try to find the market name and search for it in the page
+    // Step 2: Check for max value in text near the stake input
+    var input = modal.querySelector('input.stakeinput[type="number"]') ||
+        modal.querySelector('input[type="number"]:not([disabled])');
+    if (input && input.parentElement) {
+        // Check parent and nearby siblings for max info
+        var nearbyElements = [
+            input.parentElement,
+            input.parentElement.parentElement,
+            input.previousElementSibling,
+            input.nextElementSibling
+        ];
+        console.log('🎯 Checking elements near stake input...');
+        for (var i = 0; i < nearbyElements.length; i++) {
+            if (nearbyElements[i]) {
+                var t = nearbyElements[i].innerText || nearbyElements[i].textContent;
+                if (t && t.length < 300) {
+                    var m = parse(t);
+                    if (m) {
+                        allMaxValues.push({ value: m, source: 'near-input-' + i, text: t.substring(0, 50) });
+                        console.log('✓ Found max near input:', m, 'from:', t.substring(0, 50));
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 3: Parse the entire modal text (but be careful - might have multiple markets)
+    var modalText = modal.innerText || modal.textContent;
+    var modalMax = parse(modalText);
+    if (modalMax) {
+        allMaxValues.push({ value: modalMax, source: 'full-modal-text', text: modalText.substring(0, 50) });
+        console.log('✓ Found max in full modal text:', modalMax);
+    }
+
+    // Step 4: Try to find the market name and search for it in the page
     var nameEl = modal.querySelector('.bet-team-name, b, .modal-title, .market-name, h5, h6, strong');
-    if (nameEl) {
+    if (nameEl && allMaxValues.length === 0) {
         var mName = (nameEl.innerText || nameEl.textContent).trim();
-        console.log('🎯 Searching for market:', mName.substring(0, 30));
+        console.log('🎯 Searching page for market:', mName.substring(0, 30));
 
         var markets = document.querySelectorAll('.fancy-market, .market-row, .bet-table-row, tr, [class*="market"]');
         for (var i = 0; i < markets.length; i++) {
             var marketText = markets[i].innerText || markets[i].textContent || '';
             if (marketText.toLowerCase().includes(mName.toLowerCase().substring(0, 15))) {
                 console.log('📍 Found matching market row');
-                maxFound = parse(marketText);
-                if (maxFound) {
-                    console.log('✅ Max found in market row:', maxFound);
-                    break;
+                var m = parse(marketText);
+                if (m) {
+                    allMaxValues.push({ value: m, source: 'page-market-' + i, text: marketText.substring(0, 50) });
+                    console.log('✓ Found max in market row:', m);
+                    break; // Only take the first matching market from page
                 }
             }
         }
     }
-    if (maxFound) return maxFound;
 
-    // Step 4: Last resort - check all min-max elements on the page
-    console.log('🔄 Trying fallback search...');
-    var all = document.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"]');
-    for (var i = all.length - 1; i >= 0; i--) {
-        var m = parse(all[i].innerText || all[i].textContent);
-        if (m && m >= 1000) {
-            maxFound = m;
-            console.log('✅ Max found in fallback:', maxFound);
-            break;
+    // Step 5: Choose the best max value from all found values
+    if (allMaxValues.length > 0) {
+        console.log('📊 Found', allMaxValues.length, 'max values:', allMaxValues.map(function (v) { return v.value; }));
+
+        // Priority: 
+        // 1. Values from modal elements (most reliable)
+        // 2. Values near input field
+        // 3. Full modal text
+        // 4. Page market rows
+
+        // If we have values from modal elements or near input, prefer the LARGEST one
+        // (because if there are multiple, the larger one is likely the correct limit)
+        var modalOrNearValues = allMaxValues.filter(function (v) {
+            return v.source.startsWith('modal-element') || v.source.startsWith('near-input');
+        });
+
+        if (modalOrNearValues.length > 0) {
+            // Take the largest value from modal/near-input sources
+            maxFound = Math.max.apply(null, modalOrNearValues.map(function (v) { return v.value; }));
+            console.log('✅ Selected max from modal/near-input (largest):', maxFound);
+        } else {
+            // Otherwise take the first value we found
+            maxFound = allMaxValues[0].value;
+            console.log('✅ Selected max from', allMaxValues[0].source, ':', maxFound);
         }
     }
 

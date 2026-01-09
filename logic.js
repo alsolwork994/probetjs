@@ -246,49 +246,119 @@ window.ProBet.attemptSingleBet = function (stake) {
 window.ProBet.findMaxValue = function (modal) {
     function parse(text) {
         if (!text) return null;
-        var match = text.match(/Min:\s*([\d.]+)\s+Max:\s*([\d.]+)\s*([KLkl])/i) ||
-            text.match(/Range:\s*(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s*([KLkl]?)/i) ||
-            text.match(/Max:\s*([\d.]+)\s*([KLkl])/i);
+
+        // Clean up text - remove extra spaces and normalize
+        text = text.replace(/\s+/g, ' ').trim();
+
+        // Try different patterns in order of specificity
+        // Pattern 1: "Min: 100  Max: 10L" or "Min: 100 Max: 10L"
+        var match = text.match(/Min:\s*[\d.]+\s+Max:\s*([\d.]+)\s*([KLkl])/i);
         if (match) {
-            var val = parseFloat(match[2] || match[1]);
-            var suf = (match[3] || match[2] || '').toUpperCase();
-            if (text.includes('Range:')) { val = parseFloat(match[2]); suf = (match[3] || '').toUpperCase(); }
-            else if (text.includes('Min:')) { val = parseFloat(match[2]); suf = match[3].toUpperCase(); }
-            else if (match.length === 3 && text.includes('Max:')) { val = parseFloat(match[1]); suf = match[2].toUpperCase(); }
+            var val = parseFloat(match[1]);
+            var suf = match[2].toUpperCase();
             if (suf === 'K') val *= 1000;
             else if (suf === 'L') val *= 100000;
+            console.log('✓ Max found (Min/Max pattern):', val, 'from:', text.substring(0, 50));
             return Math.floor(val);
         }
+
+        // Pattern 2: "Max: 1L" or "Max: 50K"
+        match = text.match(/Max:\s*([\d.]+)\s*([KLkl])/i);
+        if (match) {
+            var val = parseFloat(match[1]);
+            var suf = match[2].toUpperCase();
+            if (suf === 'K') val *= 1000;
+            else if (suf === 'L') val *= 100000;
+            console.log('✓ Max found (Max only pattern):', val, 'from:', text.substring(0, 50));
+            return Math.floor(val);
+        }
+
+        // Pattern 3: "Range: 100 to 50000" or "Range: 1 to 5L"
+        match = text.match(/Range:\s*[\d.]+\s+to\s+([\d.]+)\s*([KLkl]?)/i);
+        if (match) {
+            var val = parseFloat(match[1]);
+            var suf = (match[2] || '').toUpperCase();
+            if (suf === 'K') val *= 1000;
+            else if (suf === 'L') val *= 100000;
+            console.log('✓ Max found (Range pattern):', val, 'from:', text.substring(0, 50));
+            return Math.floor(val);
+        }
+
+        // Pattern 4: "Max: 1" (plain number, no suffix)
+        match = text.match(/Max:\s*([\d.]+)(?!\d)/i);
+        if (match) {
+            var val = parseFloat(match[1]);
+            console.log('✓ Max found (plain number):', val, 'from:', text.substring(0, 50));
+            return Math.floor(val);
+        }
+
         return null;
     }
 
+    console.log('🔍 Starting max bet search...');
     var maxFound = null;
-    var minMaxElements = modal.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], span, div');
+
+    // Step 1: Check modal content directly first (most reliable)
+    var modalText = modal.innerText || modal.textContent;
+    maxFound = parse(modalText);
+    if (maxFound) {
+        console.log('✅ Max found in modal text:', maxFound);
+        return maxFound;
+    }
+
+    // Step 2: Look for specific min-max elements
+    var minMaxElements = modal.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-info, .bet-info');
+    console.log('📋 Checking', minMaxElements.length, 'min-max elements...');
     for (var i = 0; i < minMaxElements.length; i++) {
         var t = minMaxElements[i].innerText || minMaxElements[i].textContent;
-        if (t && t.length < 200) { var m = parse(t); if (m && m >= 10000) { maxFound = m; break; } }
+        if (t && t.length < 200) {
+            var m = parse(t);
+            if (m) {
+                maxFound = m;
+                console.log('✅ Max found in element', i, ':', maxFound);
+                break;
+            }
+        }
     }
-    if (!maxFound) maxFound = parse(modal.innerText || modal.textContent);
-    if (!maxFound) {
-        var nameEl = modal.querySelector('.bet-team-name, b, .modal-title, .market-name, h5, h6, strong');
-        if (nameEl) {
-            var mName = (nameEl.innerText || nameEl.textContent).trim();
-            var markets = document.querySelectorAll('.fancy-market, .market-row, .bet-table-row, tr, [class*="market"]');
-            for (var i = 0; i < markets.length; i++) {
-                if ((markets[i].innerText || '').toLowerCase().includes(mName.toLowerCase().substring(0, 15))) {
-                    var selectors = '.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-nation-name, .max-bet';
-                    var mm = markets[i].querySelector(selectors);
-                    if (!mm) { var p = markets[i].closest('.bet-table, .market-container, .game-market, .market-4, .market-wrapper'); if (p) mm = p.querySelector(selectors); }
-                    if (mm) { maxFound = parse(mm.innerText || mm.textContent); if (maxFound) break; }
-                    maxFound = parse(markets[i].innerText || markets[i].textContent); if (maxFound) break;
+    if (maxFound) return maxFound;
+
+    // Step 3: Try to find the market name and search for it in the page
+    var nameEl = modal.querySelector('.bet-team-name, b, .modal-title, .market-name, h5, h6, strong');
+    if (nameEl) {
+        var mName = (nameEl.innerText || nameEl.textContent).trim();
+        console.log('🎯 Searching for market:', mName.substring(0, 30));
+
+        var markets = document.querySelectorAll('.fancy-market, .market-row, .bet-table-row, tr, [class*="market"]');
+        for (var i = 0; i < markets.length; i++) {
+            var marketText = markets[i].innerText || markets[i].textContent || '';
+            if (marketText.toLowerCase().includes(mName.toLowerCase().substring(0, 15))) {
+                console.log('📍 Found matching market row');
+                maxFound = parse(marketText);
+                if (maxFound) {
+                    console.log('✅ Max found in market row:', maxFound);
+                    break;
                 }
             }
         }
     }
-    if (!maxFound) {
-        var all = document.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"], .market-nation-name, .max-bet');
-        for (var i = all.length - 1; i >= 0; i--) { var m = parse(all[i].innerText); if (m && m >= 1000) { maxFound = m; break; } }
+    if (maxFound) return maxFound;
+
+    // Step 4: Last resort - check all min-max elements on the page
+    console.log('🔄 Trying fallback search...');
+    var all = document.querySelectorAll('.fancy-min-max, .fancy-min-max-box, .min-max, [class*="min-max"]');
+    for (var i = all.length - 1; i >= 0; i--) {
+        var m = parse(all[i].innerText || all[i].textContent);
+        if (m && m >= 1000) {
+            maxFound = m;
+            console.log('✅ Max found in fallback:', maxFound);
+            break;
+        }
     }
+
+    if (!maxFound) {
+        console.log('❌ Max bet not found! Modal text:', modalText.substring(0, 200));
+    }
+
     return maxFound;
 };
 

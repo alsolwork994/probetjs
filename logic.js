@@ -40,7 +40,7 @@ window.ProBet.SiteConfigs = {
             modalLay: '[style*="rgb(255, 182, 193)"], [style*="pink"], [class*="_lay"]',
             stakeInput: '._stake_inp_3vbcs_56, input[class*="_stake_inp"], input[placeholder="stake"], input[class*="stake"]',
             oddsInput: '._odds_inp_3vbcs_32, input[class*="_odds_inp"], input[placeholder="odds"]',
-            submitButton: '._betSubmit_3vbcs_255, ._placeBet_btn_3vbcs_485, [class*="_betSubmit"], [class*="_placeBet_btn"], button:not([disabled]):not([class*="cancel"]):not([class*="delete"])',
+            submitButton: '._betSubmit_3vbcs_255, ._placeBet_btn_3vbcs_485, [class*="_betSubmit"], [class*="_placeBet_btn"], [class*="mobView_Btn"]:not([class*="cancel"]), button:not([disabled]):not([class*="cancel"]):not([class*="delete"])',
             loginUsername: 'input[name="username"]',
             loginPassword: 'input[name="password"]',
             loginSubmit: 'button[type="submit"]'
@@ -49,8 +49,8 @@ window.ProBet.SiteConfigs = {
             elements: [
                 '._amt_cont_3vbcs_322',
                 '[class*="_amt_cont"]',
-                '.fancy-min-max',
                 '.maxbet_box',
+                '.fancy-min-max',
                 '[class*="min-max"]',
                 '.bet-info',
                 '.limits'

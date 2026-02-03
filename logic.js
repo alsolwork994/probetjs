@@ -1,108 +1,3 @@
-// ==========================================
-// SITE CONFIGURATION SYSTEM
-// ==========================================
-// This file contains site-specific configurations for different betting exchanges
-// Each site has its own selectors and patterns for modal detection, input fields, etc.
-
-window.ProBet = window.ProBet || {};
-
-window.ProBet.SiteConfigs = {
-    'diamondexch': {
-        name: 'DiamondExch',
-        domains: ['diamondexch99.now', 'diamondexch'],
-        selectors: {
-            modal: '.place-bet-modal',
-            modalBack: '.place-bet-modal.back',
-            modalLay: '.place-bet-modal.lay',
-            stakeInput: 'input.stakeinput[type="number"], input[type="number"]:not([disabled])',
-            submitButton: '.btn-success, button.btn-success, button[class*="bet"]:not([disabled]):not(.close)',
-            loginUsername: 'input[name="username"]',
-            loginPassword: 'input[name="password"]',
-            loginSubmit: 'button[type="submit"]'
-        },
-        maxBetPatterns: {
-            elements: ['.fancy-min-max', '.fancy-min-max-box', '.min-max', '[class*="min-max"]', '.market-info', '.bet-info', '.bet-limits', '.limits'],
-            regex: [
-                /Min:\s*[\d.]+\s+Max:\s*([\d.]+)\s*([KLkl])/i,
-                /Max:\s*([\d.]+)\s*([KLkl])/i,
-                /Range:\s*[\d.]+\s+to\s+([\d.]+)\s*([KLkl]?)/i,
-                /Max:\s*([\d.]+)(?!\d)/i
-            ]
-        }
-    },
-    'tomexchange': {
-        name: 'TOM Exchange',
-        domains: ['tomexchange', 'tomexch', 'tom'],
-        selectors: {
-            // Multiple selectors for flexibility (hashed class names may change)
-            modal: '._betSlip_main_wrapper_3vbcs_199, [class*="_betSlip_main_wrapper"], [class*="betSlip"]',
-            modalBack: '[style*="rgb(69, 127, 202)"], [style*="69, 127, 202"]',
-            modalLay: '[style*="rgb(255, 182, 193)"], [style*="pink"], [class*="_lay"]',
-            stakeInput: '._stake_inp_3vbcs_56, input[class*="_stake_inp"], input[placeholder="stake"], input[class*="stake"]',
-            oddsInput: '._odds_inp_3vbcs_32, input[class*="_odds_inp"], input[placeholder="odds"]',
-            submitButton: '._betSubmit_3vbcs_255, ._placeBet_btn_3vbcs_485, [class*="_betSubmit"], [class*="_placeBet_btn"], [class*="mobView_Btn"]:not([class*="cancel"]), button:not([disabled]):not([class*="cancel"]):not([class*="delete"])',
-            loginUsername: 'input[name="username"]',
-            loginPassword: 'input[name="password"]',
-            loginSubmit: 'button[type="submit"]'
-        },
-        maxBetPatterns: {
-            elements: [
-                '._amt_cont_3vbcs_322',
-                '[class*="_amt_cont"]',
-                '.maxbet_box',
-                '.fancy-min-max',
-                '[class*="min-max"]',
-                '.bet-info',
-                '.limits'
-            ],
-            regex: [
-                /Min:\s*[\d.]+\s+Max:\s*([\d.]+)\s*([KLkl])/i,
-                /Max:\s*([\d.]+)\s*([KLkl])/i,
-                /Max Bet\s*:\s*([\d.]+)\s*([KLkl])/i,
-                /Max Market\s*:\s*([\d.]+)\s*([KLkl]?)/i,
-                /Range:\s*[\d.]+\s+to\s+([\d.]+)\s*([KLkl]?)/i
-            ]
-        },
-        modalDetection: {
-            // TOM Exchange modal is always in DOM, detect by position/visibility
-            checkVisibility: true,
-            visibleConditions: [
-                function (el) {
-                    var style = window.getComputedStyle(el);
-                    // Modal is visible if NOT positioned off-screen
-                    return style.top !== '-5000px' && style.left !== '-5000px' &&
-                        style.display !== 'none' && style.visibility !== 'hidden';
-                }
-            ]
-        }
-    }
-};
-
-// Site detection function
-window.ProBet.detectSite = function () {
-    var hostname = window.location.hostname.toLowerCase();
-    console.log('🔍 Detecting site from hostname:', hostname);
-
-    for (var key in window.ProBet.SiteConfigs) {
-        var config = window.ProBet.SiteConfigs[key];
-        for (var i = 0; i < config.domains.length; i++) {
-            var domain = config.domains[i].toLowerCase();
-            if (hostname.includes(domain)) {
-                console.log('✓ Detected site:', config.name, '(matched:', domain, ')');
-                return key;
-            }
-        }
-    }
-
-    console.log('⚠️ Unknown site, using default (diamondexch)');
-    return 'diamondexch';
-};
-
-// Initialize site detection
-window.ProBet.currentSite = null;
-window.ProBet.currentConfig = null;
-
-console.log('✓ Site configuration system loaded');
 window.ProBet = window.ProBet || {};
 
 // ==========================================
@@ -121,13 +16,6 @@ window.ProBet.state = {
 };
 
 window.ProBet.configure = function (isEnabled, stake) {
-    // Initialize site detection if not already done
-    if (!window.ProBet.currentSite && window.ProBet.detectSite) {
-        window.ProBet.currentSite = window.ProBet.detectSite();
-        window.ProBet.currentConfig = window.ProBet.SiteConfigs[window.ProBet.currentSite];
-        console.log('📍 Using config for:', window.ProBet.currentConfig.name);
-    }
-
     window.ProBet.config.isEnabled = isEnabled;
     window.ProBet.config.stake = stake;
 
@@ -172,15 +60,9 @@ window.ProBet.configure = function (isEnabled, stake) {
 // ==========================================
 window.ProBet.performAutoLogin = function (username, password) {
     try {
-        var config = window.ProBet.currentConfig || (window.ProBet.SiteConfigs && window.ProBet.SiteConfigs.diamondexch);
-        if (!config) {
-            return 'Error: No site config';
-        }
-
-        var usernameField = document.querySelector(config.selectors.loginUsername);
-        var passwordField = document.querySelector(config.selectors.loginPassword);
-        var submitButton = document.querySelector(config.selectors.loginSubmit);
-
+        var usernameField = document.querySelector('input[name="username"]');
+        var passwordField = document.querySelector('input[name="password"]');
+        var submitButton = document.querySelector('button[type="submit"]');
         if (usernameField && passwordField && submitButton) {
             usernameField.value = ''; passwordField.value = ''; usernameField.focus();
             var set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
@@ -192,7 +74,7 @@ window.ProBet.performAutoLogin = function (username, password) {
             }
             triggerWithDelay(usernameField); triggerWithDelay(passwordField);
             setTimeout(function () { submitButton.click(); }, 800);
-            return 'Login submitted for ' + config.name;
+            return 'Login submitted';
         }
         return 'Form not found';
     } catch (e) { return 'Error: ' + e.message; }
@@ -203,13 +85,6 @@ window.ProBet.performAutoLogin = function (username, password) {
 // ==========================================
 window.ProBet.setupMutationObserver = function () {
     if (window.betObserverSetup) return 'already_setup';
-
-    // Get site config (fallback to diamondexch if not set)
-    var config = window.ProBet.currentConfig || (window.ProBet.SiteConfigs && window.ProBet.SiteConfigs.diamondexch);
-    if (!config) {
-        console.error('❌ No site config available!');
-        return 'no_config';
-    }
 
     var observer = new MutationObserver(function (mutations) {
         if (!window.ProBet.config.isEnabled) return;
@@ -222,48 +97,18 @@ window.ProBet.setupMutationObserver = function () {
 
             mutation.addedNodes.forEach(function (node) {
                 if (node.nodeType === 1) {
-                    // Check using site-specific modal selector
-                    var modalSelectors = config.selectors.modal.split(',');
-                    for (var i = 0; i < modalSelectors.length; i++) {
-                        var selector = modalSelectors[i].trim();
-                        if ((node.matches && node.matches(selector)) ||
-                            (node.querySelector && node.querySelector(selector))) {
-                            modalFound = true;
-                            break;
-                        }
+                    if ((node.classList && node.classList.contains('place-bet-modal')) ||
+                        (node.querySelector && node.querySelector('.place-bet-modal'))) {
+                        modalFound = true;
                     }
                 }
             });
 
-            // For sites with visibility-based detection (like TOM Exchange)
-            if (!modalFound && config.modalDetection && config.modalDetection.checkVisibility) {
-                if (mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
-                    var modalSelectors = config.selectors.modal.split(',');
-                    for (var i = 0; i < modalSelectors.length; i++) {
-                        var selector = modalSelectors[i].trim();
-                        if (mutation.target.matches && mutation.target.matches(selector)) {
-                            // Check if modal became visible
-                            for (var j = 0; j < config.modalDetection.visibleConditions.length; j++) {
-                                if (config.modalDetection.visibleConditions[j](mutation.target)) {
-                                    modalFound = true;
-                                    break;
-                                }
-                            }
-                            if (modalFound) break;
-                        }
-                    }
-                }
-            } else if (!modalFound && mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
-                // Standard visibility check for sites without special detection
+            if (!modalFound && mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
                 var target = mutation.target;
-                var modalSelectors = config.selectors.modal.split(',');
-                for (var i = 0; i < modalSelectors.length; i++) {
-                    var selector = modalSelectors[i].trim();
-                    if (target.matches && target.matches(selector)) {
-                        if (target.style.display !== 'none') {
-                            modalFound = true;
-                            break;
-                        }
+                if (target.classList && target.classList.contains('place-bet-modal')) {
+                    if (target.style.display !== 'none') {
+                        modalFound = true;
                     }
                 }
             }
@@ -276,7 +121,7 @@ window.ProBet.setupMutationObserver = function () {
 
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
     window.betObserverSetup = true;
-    return 'observer_setup_multisite';
+    return 'observer_setup_v6_strict_result';
 };
 
 window.ProBet.checkModalVisibility = function () {
@@ -347,53 +192,15 @@ window.ProBet.initiateBetSequence = function (stake) {
 
 window.ProBet.attemptSingleBet = function (stake) {
     try {
-        var config = window.ProBet.currentConfig || (window.ProBet.SiteConfigs && window.ProBet.SiteConfigs.diamondexch);
-        if (!config) {
-            return { status: 'error', reason: 'no_site_config' };
-        }
-
-        // Find modal using site-specific selectors
-        var modalSelectors = [
-            config.selectors.modalBack,
-            config.selectors.modalLay,
-            config.selectors.modal
-        ];
-
-        var modal = null;
-        for (var i = 0; i < modalSelectors.length; i++) {
-            var selectorList = modalSelectors[i].split(',');
-            for (var j = 0; j < selectorList.length; j++) {
-                var selector = selectorList[j].trim();
-                modal = document.querySelector(selector);
-                if (modal) break;
-            }
-            if (modal) break;
-        }
+        var modal = document.querySelector('.place-bet-modal.back') ||
+            document.querySelector('.place-bet-modal.lay') ||
+            document.querySelector('.place-bet-modal');
 
         if (!modal) return { status: 'retry', reason: 'no_modal_in_dom' };
 
-        // For sites with visibility detection (like TOM Exchange), verify modal is actually visible
-        if (config.modalDetection && config.modalDetection.checkVisibility) {
-            var isVisible = false;
-            for (var i = 0; i < config.modalDetection.visibleConditions.length; i++) {
-                if (config.modalDetection.visibleConditions[i](modal)) {
-                    isVisible = true;
-                    break;
-                }
-            }
-            if (!isVisible) {
-                return { status: 'retry', reason: 'modal_not_visible' };
-            }
-        }
-
         // --- INPUT HANDLING ---
-        var inputSelectors = config.selectors.stakeInput.split(',');
-        var input = null;
-        for (var i = 0; i < inputSelectors.length; i++) {
-            var selector = inputSelectors[i].trim();
-            input = modal.querySelector(selector);
-            if (input) break;
-        }
+        var input = modal.querySelector('input.stakeinput[type="number"]') ||
+            modal.querySelector('input[type="number"]:not([disabled])');
 
         if (!input) return { status: 'retry', reason: 'no_input_found' };
 
@@ -415,13 +222,10 @@ window.ProBet.attemptSingleBet = function (stake) {
         });
 
         // --- BUTTON HANDLING ---
-        var buttonSelectors = config.selectors.submitButton.split(',');
-        var btn = null;
-        for (var i = 0; i < buttonSelectors.length; i++) {
-            var selector = buttonSelectors[i].trim();
-            btn = modal.querySelector(selector);
-            if (btn) break;
-        }
+        var btn = modal.querySelector('.btn-success') ||
+            modal.querySelector('button.btn-success') ||
+            modal.querySelector('button[class*="bet"]') ||
+            modal.querySelector('button:not([disabled]):not(.close)');
 
         if (!btn) return { status: 'retry', reason: 'no_button_found' };
 
